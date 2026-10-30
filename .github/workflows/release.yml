@@ -109,7 +109,10 @@ jobs:
 
       - name: Check the source version
         run: |
-          go version | grep -q "go${GO_VERSION} " || { echo "::error::wrong Go: $(go version)"; exit 1; }
+          # Read whole outputs before matching: under pipefail, a reader that exits
+          # early (grep -q, head) can SIGPIPE the writer and fail or flip the check.
+          gov="$(go version)"
+          [[ "$gov " == *"go${GO_VERSION} "* ]] || { echo "::error::wrong Go: $gov"; exit 1; }
           got="$(cat src/VERSION)"
           if [ "$got" != "$VERSION" ]; then
             echo "::error::nryn-ai/runtime at $GITHUB_REF_NAME is version $got, not $VERSION"; exit 1
@@ -155,8 +158,10 @@ jobs:
           mkdir -p /tmp/unpack
           tar -xzf "out/assets/nryn-runtime_${VERSION}_linux_${{ matrix.arch }}.tar.gz" -C /tmp/unpack nryn-runtimed THIRD_PARTY_NOTICES.md
           cmp /tmp/unpack/nryn-runtimed "out/${{ matrix.arch }}/nryn-runtimed"
-          /tmp/unpack/nryn-runtimed --version | head -1 | grep -Eq "^nryn-runtimed[[:space:]]+${VERSION//./\\.}\$"
-          if ldd /tmp/unpack/nryn-runtimed 2>/dev/null | grep -q '=>'; then
+          ver="$(/tmp/unpack/nryn-runtimed --version)"
+          grep -Eq "^nryn-runtimed[[:space:]]+${VERSION//./\\.}\$" <<<"${ver%%$'\n'*}"
+          deps="$(ldd /tmp/unpack/nryn-runtimed 2>&1 || true)"
+          if grep -q '=>' <<<"$deps"; then
             echo "::error::nryn-runtimed is dynamically linked"; exit 1
           fi
           # the engine's own invariants on a generated tiny model
